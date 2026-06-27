@@ -354,15 +354,46 @@ jobs:
           repository: ${{ inputs.override_ci_tools_repository }}
           fetch-depth: 0
 
-      - name: Build Docker image
+      # cow fork: build-once-pull-forever. The image is a function of the
+      # Dockerfile + its build-args, so we tag it by a hash of those and pull a
+      # prebuilt copy from GHCR when the recipe is unchanged. Only a Dockerfile
+      # or vcpkg/toolchain change triggers a rebuild (and re-push). The rest of
+      # the workflow still consumes the local `duckdb/<arch>` tag, untouched.
+      - name: Build or pull Docker image
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          EXT_NAME: ${{ inputs.extension_name }}
+          ARCH: ${{ matrix.duckdb_arch }}
+          VCPKG_URL: ${{ inputs.vcpkg_url }}
+          VCPKG_COMMIT: ${{ inputs.vcpkg_commit }}
+          TOOLCHAINS: ${{ inputs.enable_rust  && format(';{0};rust;', inputs.extra_toolchains) || format(';{0};', inputs.extra_toolchains) }}
         run: |
-          docker build \
-            --build-arg 'vcpkg_url=${{ inputs.vcpkg_url }}' \
-            --build-arg 'vcpkg_commit=${{ inputs.vcpkg_commit }}' \
-            --build-arg 'extra_toolchains=${{ inputs.enable_rust  && format(';{0};rust;', inputs.extra_toolchains) || format(';{0};', inputs.extra_toolchains) }}' \
-            -t duckdb/${{ matrix.duckdb_arch }} \
-            ./extension-ci-tools/docker/${{ matrix.duckdb_arch }}
+          set -euo pipefail
+          dockerfile="./extension-ci-tools/docker/${ARCH}/Dockerfile"
+          hash="$( { cat "$dockerfile"; printf '%s|%s|%s' "$VCPKG_URL" "$VCPKG_COMMIT" "$TOOLCHAINS"; } | sha256sum | cut -c1-16 )"
+          owner="$( echo "$REGISTRY_OWNER" | tr '[:upper:]' '[:lower:]' )"
+          image="ghcr.io/${owner}/${EXT_NAME}-build:${ARCH}-${hash}"
+          echo "Target build image: $image"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin \
+            || echo "::warning::GHCR login failed; proceeding to build uncached"
+          if docker pull "$image" 2>/dev/null; then
+            echo "Image cache HIT  -> reusing $image"
+          else
+            echo "Image cache MISS -> building $image"
+            docker build \
+              --build-arg "vcpkg_url=${VCPKG_URL}" \
+              --build-arg "vcpkg_commit=${VCPKG_COMMIT}" \
+              --build-arg "extra_toolchains=${TOOLCHAINS}" \
+              -t "$image" \
+              "./extension-ci-tools/docker/${ARCH}"
+            docker push "$image" \
+              || echo "::warning::Could not push $image to GHCR (needs packages:write); build continues uncached"
+          fi
+          # The rest of the workflow refers to the image by this local tag.
+          docker tag "$image" "duckdb/${ARCH}"
 
       - name: Create env file for docker
         run: |

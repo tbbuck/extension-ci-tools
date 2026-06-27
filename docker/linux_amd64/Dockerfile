@@ -1,18 +1,16 @@
 FROM quay.io/pypa/manylinux_2_28_x86_64
 
-# Setup the basic necessities
-RUN yum groupinstall -y "Development Tools"
-RUN yum install -y curl zip unzip tar autoconf libtool
-RUN yum install -y ninja-build
-RUN yum install -y perl-IPC-Cmd
-RUN yum install -y perl-core
-RUN yum install -y ccache
-RUN yum install -y java-11-openjdk-devel maven
-RUN yum install -y wget
-RUN yum install -y kernel-headers
-RUN yum install -y kernel-devel
-RUN yum install -y glibc-devel
-RUN yum install -y jq
+# Setup the basic necessities.
+# cow diet: consolidated into a single layer with the yum cache cleaned in the
+# SAME layer (so the metadata bytes don't persist), and dropped
+# java-11-openjdk-devel + maven (a JVM-client toolchain a Rust extension never
+# uses).
+RUN yum groupinstall -y "Development Tools" && \
+    yum install -y \
+      curl zip unzip tar autoconf libtool \
+      ninja-build perl-IPC-Cmd perl-core ccache wget \
+      kernel-headers kernel-devel glibc-devel jq && \
+    yum clean all && rm -rf /var/cache/yum
 
 # We need a recent CMake
 RUN mkdir /cmake_4_02 && \
@@ -20,13 +18,11 @@ RUN mkdir /cmake_4_02 && \
     wget https://github.com/Kitware/CMake/releases/download/v4.0.2/cmake-4.0.2-linux-x86_64.sh && \
     chmod +x cmake-4.0.2-linux-x86_64.sh  && \
     ./cmake-4.0.2-linux-x86_64.sh --skip-license --prefix=/usr/local && \
-    cmake --version
+    cmake --version && \
+    cd / && rm -rf /cmake_4_02
 
-# Install the AWS cli, since the packaged version is too old
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.22.35.zip" -o "awscliv2.zip"
-RUN unzip -q awscliv2.zip
-RUN ./aws/install
-RUN aws --version
+# cow diet: dropped the AWS CLI — the deploy job runs `aws s3 sync` outside the
+# container (on the ubuntu-latest runner), so the in-image copy was dead weight.
 
 # Setup VCPKG n a mounted volume TODO: figure out how to cache this
 ARG vcpkg_url
@@ -87,7 +83,7 @@ esac
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN case "$extra_toolchains" in \
   *\;rust\;*) \
-    curl https://sh.rustup.rs -sSf | bash -s -- -y; \
+    curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal; \
   ;; \
 esac
 
