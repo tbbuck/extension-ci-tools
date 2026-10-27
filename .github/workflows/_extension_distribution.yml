@@ -370,7 +370,23 @@ jobs:
       - name: Setup
         run: python3 extension-ci-tools/scripts/ci_phase.py setup
 
+      # cow fork: pull the build image from GHCR, or build and push it
+      # (scripts/build-image.ts); the Build step then skips its own docker build.
+      - name: Setup / Node (cow fork)
+        if: ${{ env.CI_LINUX_NATIVE_CONTAINER != 'true' }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Build image (cow fork)
+        if: ${{ env.CI_LINUX_NATIVE_CONTAINER != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node extension-ci-tools/scripts/build-image.ts
+
       - name: Build
+        env:
+          CI_LINUX_IMAGE_PREBUILT: ${{ env.CI_LINUX_NATIVE_CONTAINER != 'true' }}
         run: python3 extension-ci-tools/scripts/ci_phase.py build
 
       - name: Test

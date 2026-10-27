@@ -737,23 +737,25 @@ class PhaseRunner:
                 extra_env=self.build_environment(),
             )
             return
-        self.run(
-            [
-                "docker",
-                "build",
-                "--build-arg",
-                f"vcpkg_url={self.required('CI_VCPKG_URL')}",
-                "--build-arg",
-                f"vcpkg_commit={self.required('CI_VCPKG_COMMIT')}",
-                "--build-arg",
-                f"extra_toolchains=;{self.value('CI_EXTRA_TOOLCHAINS').strip(';')};",
-                "--build-arg",
-                f"cuda_version={self.value('CI_CUDA_VERSION')}",
-                "-t",
-                f"duckdb/{self.architecture}",
-                str(self.workspace / "extension-ci-tools" / "docker" / self.architecture),
-            ]
-        )
+        # cow fork: scripts/build-image.ts already tagged duckdb/<arch>.
+        if not self.enabled("CI_LINUX_IMAGE_PREBUILT"):
+            self.run(
+                [
+                    "docker",
+                    "build",
+                    "--build-arg",
+                    f"vcpkg_url={self.required('CI_VCPKG_URL')}",
+                    "--build-arg",
+                    f"vcpkg_commit={self.required('CI_VCPKG_COMMIT')}",
+                    "--build-arg",
+                    f"extra_toolchains=;{self.value('CI_EXTRA_TOOLCHAINS').strip(';')};",
+                    "--build-arg",
+                    f"cuda_version={self.value('CI_CUDA_VERSION')}",
+                    "-t",
+                    f"duckdb/{self.architecture}",
+                    str(self.workspace / "extension-ci-tools" / "docker" / self.architecture),
+                ]
+            )
         self.create_docker_environment()
         self.install_extra_vcpkg_dependencies(docker=True)
         docker = self.docker_arguments()
